@@ -420,7 +420,7 @@
     import {
       FaceLandmarker,
       FilesetResolver
-    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/vision_bundle.mjs";
 
     const $ = (s) => document.querySelector(s);
 
@@ -550,20 +550,7 @@
     }
 
     function updateDurationButtons() {
-      jawSlider.addEventListener("input", () => {
-      OPEN_THRESHOLD = Number(jawSlider.value);
-      jawValue.textContent = OPEN_THRESHOLD.toFixed(2);
-
-      if (isRecording) {
-        statusEl.textContent =
-          `記錄中：偵測時間 ${selectedDurationMinutes} 分鐘；jawOpen > ${OPEN_THRESHOLD.toFixed(2)} 即算張開。`;
-      } else {
-        statusEl.textContent =
-          `JawOpen 門檻已調整為 ${OPEN_THRESHOLD.toFixed(2)}。`;
-      }
-    });
-
-    durationButtons.forEach(btn => {
+      durationButtons.forEach(btn => {
         const mins = Number(btn.dataset.minutes);
         btn.classList.toggle("active", mins === selectedDurationMinutes);
         btn.disabled = isRecording;
@@ -634,7 +621,7 @@
       try {
         statusEl.textContent = "載入 MediaPipe 模型中…";
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
         );
 
         faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -706,11 +693,18 @@
 
     function getJawOpenScore(result) {
       const categories = result?.faceBlendshapes?.[0]?.categories;
-      if (!categories) return null;
-      const jaw = categories.find(
-        c => c.categoryName === "jawOpen" || c.displayName === "jawOpen"
-      );
-      return jaw?.score ?? null;
+      if (!Array.isArray(categories) || categories.length === 0) return null;
+
+      // 正常情況依 categoryName 取得 jawOpen。
+      // MediaPipe 的 jawOpen blendshape index 為 25，因此名稱異常時可退回 index 25。
+      const jaw =
+        categories.find(c => c?.categoryName === "jawOpen") ||
+        categories.find(c => c?.displayName === "jawOpen") ||
+        categories.find(c => Number(c?.index) === 25) ||
+        categories[25];
+
+      const score = Number(jaw?.score);
+      return Number.isFinite(score) ? score : null;
     }
 
     function updateMouthState(rawOpen, perfNow) {
@@ -1120,8 +1114,13 @@
               mouthBadge.textContent = "嘴巴：未偵測";
               mouthBadge.className = "badge closed";
               pendingState = null;
+
+              // 開發者工具可查看 MediaPipe 是否真的有輸出 blendshapes。
+              if (result?.faceLandmarks?.length) {
+                console.debug("Face detected, but jawOpen score unavailable:", result?.faceBlendshapes);
+              }
             } else {
-              scoreBadge.textContent = `jawOpen ${score.toFixed(2)}`;
+              scoreBadge.textContent = `jawOpen ${Number(score).toFixed(2)}`;
               const rawOpen = score > OPEN_THRESHOLD;
 
               if (!isRecording) {
