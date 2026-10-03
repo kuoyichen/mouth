@@ -464,7 +464,8 @@
 
     let faceLandmarker = null;
     let stream = null;
-    let facingMode = "user"; // user = 前鏡頭, environment = 後鏡頭
+    let facingMode = "user"; // 預設前鏡頭；user = 前鏡頭, environment = 後鏡頭
+    let firstCameraStart = true;
     let detecting = false;
     let lastVideoTime = -1;
 
@@ -711,26 +712,74 @@
         stream.getTracks().forEach(t => t.stop());
       }
 
-      const constraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
+      let constraints;
 
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // 第一次啟動時明確要求前鏡頭。
+      // 某些手機不接受 exact:user，因此失敗時再退回 ideal:user。
+      if (firstCameraStart && facingMode === "user") {
+        constraints = {
+          audio: false,
+          video: {
+            facingMode: { exact: "user" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        };
+      } else {
+        constraints = {
+          audio: false,
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        };
+      }
+
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        // exact:user 在部分裝置可能失敗，改用較寬鬆的 ideal:user。
+        if (firstCameraStart && facingMode === "user") {
+          console.warn("無法用 exact:user 取得前鏡頭，改用 ideal:user：", err);
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: {
+              facingMode: { ideal: "user" },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          });
+        } else {
+          throw err;
+        }
+      }
+
+      firstCameraStart = false;
+
       camera.srcObject = stream;
       await camera.play();
 
-      camera.classList.toggle("front", facingMode === "user");
+      const track = stream.getVideoTracks()[0];
+      const settings = track?.getSettings?.() || {};
+      const actualFacing = settings.facingMode || facingMode;
+
+      // 根據實際相機設定決定是否鏡像。
+      camera.classList.toggle("front", actualFacing === "user");
+
+      console.log("Camera settings:", settings);
+
+      if (statusEl.textContent.includes("MediaPipe")) {
+        statusEl.textContent =
+          `MediaPipe 已就緒。目前鏡頭：${actualFacing === "user" ? "前鏡頭" : actualFacing === "environment" ? "後鏡頭" : "未知"}。`;
+      }
     }
 
     async function switchCamera() {
       switchBtn.disabled = true;
       try {
         facingMode = facingMode === "user" ? "environment" : "user";
+        firstCameraStart = false;
         await startCamera();
         lastVideoTime = -1;
       } catch (err) {
