@@ -1,782 +1,1190 @@
-<!DOCTYPE html>
-<html lang="zh-TW" class="dark">
+<!doctype html>
+<html lang="zh-Hant">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MediaPipe 智慧張嘴監測與事件整合錄影系統</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        cyber: {
-                            bg: '#0a0e17',
-                            card: '#121824',
-                            border: '#1f293d',
-                            accent: '#00f0ff',
-                            magenta: '#ff007f',
-                            warning: '#f59e0b',
-                            danger: '#ef4444'
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                        mono: ['JetBrains Mono', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    <!-- FontAwesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- MediaPipe Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>嘴巴張開紀錄器</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d10;
+      --panel: #161a20;
+      --line: #2a313b;
+      --text: #f4f7fb;
+      --muted: #aab4c2;
+      --ok: #35d07f;
+      --warn: #ffb84d;
+      --danger: #ff5f67;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app {
+      width: min(100%, 860px);
+      margin: 0 auto;
+      padding: 16px;
+    }
+    h1 {
+      margin: 4px 0 14px;
+      font-size: clamp(24px, 5vw, 34px);
+    }
+    .camera-wrap {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: #000;
+      aspect-ratio: 3 / 4;
+      max-height: 68vh;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      background: #000;
+    }
+    video.front {
+      transform: scaleX(-1);
+    }
 
-    <!-- FFmpeg.wasm - For Video Merging in Browser -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.7/dist/umd/ffmpeg.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.min.js"></script>
+    .ratio-bar {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      top: 12px;
+      height: 28px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #27c76f;
+      border: 2px solid rgba(255,255,255,.9);
+      z-index: 5;
+      box-shadow: 0 2px 10px rgba(0,0,0,.35);
+    }
+    .ratio-red {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 0%;
+      background: #ef4444;
+      transition: width .15s linear;
+    }
+    .ratio-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 900;
+      text-shadow: 0 1px 3px rgba(0,0,0,.9);
+      pointer-events: none;
+    }
 
-    <style>
-        body { background-color: #0a0e17; color: #f3f4f6; font-family: 'Inter', sans-serif; }
-        .mirror { transform: scaleX(-1); }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #0d131f; }
-        ::-webkit-scrollbar-thumb { background: #1f293d; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #00f0ff; }
-        @keyframes pulse-red {
-            0%, 100% { border-color: rgba(239, 68, 68, 0.4); box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
-            50% { border-color: rgba(239, 68, 68, 1); box-shadow: 0 0 25px rgba(239, 68, 68, 0.6); }
-        }
-        .alert-active { animation: pulse-red 1s infinite; }
-        
-        #listLoadingOverlay {
-            display: none;
-            position: absolute;
-            inset: 0;
-            background: rgba(10, 14, 23, 0.85);
-            backdrop-filter: blur(4px);
-            z-index: 20;
-            border-radius: 1rem;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-    </style>
+    .badge-row {
+      position: absolute;
+      inset: 50px 12px auto 12px;
+      display: flex;
+      gap: 8px;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .badge {
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,.58);
+      backdrop-filter: blur(8px);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .badge.open { color: #93ffbd; }
+    .badge.closed { color: #fff; }
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr minmax(180px, 1.2fr);
+      gap: 10px;
+      margin-top: 12px;
+      align-items: stretch;
+    }
+    .jaw-control {
+      background: #151b22;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 9px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-width: 0;
+    }
+    .jaw-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .jaw-label strong {
+      color: #fff;
+      font-size: 14px;
+    }
+    #jawSlider {
+      width: 100%;
+      accent-color: var(--warn);
+      cursor: pointer;
+    }
+    @media (max-width: 650px) {
+      .controls {
+        grid-template-columns: 1fr 1fr;
+      }
+      .jaw-control {
+        grid-column: 1 / -1;
+      }
+    }
+    button, a.download {
+      appearance: none;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 16px;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+    }
+    #startBtn { background: var(--ok); color: #07160e; }
+    #startBtn.stop { background: var(--danger); color: white; }
+    #switchBtn { background: #2a3340; color: white; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    .panel {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      padding: 14px;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .stat {
+      background: #0f1318;
+      border-radius: 12px;
+      padding: 10px;
+      min-width: 0;
+    }
+    .stat .label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .stat .value {
+      font-size: 19px;
+      font-weight: 800;
+      overflow-wrap: anywhere;
+    }
+    .status {
+      margin-top: 10px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .shot {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #0f1318;
+    }
+    .shot img { width: 100%; display: block; }
+    .shot .caption { padding: 8px; font-size: 12px; color: var(--muted); }
+    .result {
+      display: none;
+      margin-top: 12px;
+    }
+    .result.show { display: block; }
+    .result video {
+      width: 100%;
+      max-height: 60vh;
+      border-radius: 14px;
+      background: #000;
+      transform: none;
+    }
+    .download-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+    a.download { background: #fff; color: #111; }
+
+    .duration-controls {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .duration-btn, #viewRecordsBtn {
+      background: #222933;
+      color: white;
+      border: 1px solid var(--line);
+    }
+    .duration-btn.active {
+      background: var(--warn);
+      color: #211500;
+      border-color: transparent;
+    }
+    .duration-btn:disabled {
+      opacity: .45;
+    }
+    @media (max-width: 600px) {
+      .duration-controls {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    .records-panel {
+      display: none;
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      padding: 14px;
+    }
+    .records-panel.show {
+      display: block;
+    }
+    .records-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .records-header h2 {
+      margin: 0;
+      font-size: 20px;
+    }
+    .records-summary {
+      color: var(--muted);
+      margin-bottom: 10px;
+      line-height: 1.5;
+    }
+    .records-table-wrap {
+      overflow-x: auto;
+    }
+    .records-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 560px;
+    }
+    .records-table th,
+    .records-table td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px 8px;
+      text-align: left;
+      font-size: 14px;
+      vertical-align: top;
+    }
+    .records-table th {
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .thumb {
+      width: 96px;
+      border-radius: 8px;
+      display: block;
+    }
+
+    .note {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+  </style>
 </head>
-<body class="min-h-screen flex flex-col justify-between overflow-x-hidden text-slate-200">
+<body>
+  <main class="app">
+    <section class="camera-wrap">
+      <div id="ratioBar" class="ratio-bar" aria-label="張嘴閉嘴比例">
+        <div id="ratioRed" class="ratio-red"></div>
+        <div id="ratioLabel" class="ratio-label">閉嘴 100.0%</div>
+      </div>
+      <video id="camera" autoplay playsinline muted></video>
+      <div class="badge-row">
+        <div id="mouthBadge" class="badge closed">嘴巴：未偵測</div>
+        <div id="scoreBadge" class="badge">jawOpen 0.00</div>
+      </div>
+    </section>
 
-    <!-- Header Navigation -->
-    <header class="border-b border-slate-800 bg-cyber-card/80 backdrop-blur-md sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/30">
-                    <i class="fa-solid fa-video-slash text-lg"></i>
-                </div>
-                <div>
-                    <h1 class="font-bold text-lg text-white tracking-wide flex items-center gap-2">
-                        張嘴監測警示與錄影系統
-                        <span class="text-xs font-mono font-normal bg-rose-500/10 text-rose-400 border border-rose-500/30 px-2 py-0.5 rounded-full">v1.0 整合版</span>
-                    </h1>
-                    <p class="text-xs text-slate-400">張嘴 2 秒提醒 + 前後 2 秒錄影 + <strong class="text-cyan-400">自動合併下載</strong></p>
-                </div>
-            </div>
-
-            <div class="flex items-center space-x-3">
-                <div id="statusBadge" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium">
-                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-                    <span id="statusText">系統初始化中...</span>
-                </div>
-                <button id="toggleCameraBtn" class="bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold px-4 py-2 rounded-xl transition duration-200 shadow-lg shadow-cyan-500/20 flex items-center space-x-2 text-sm disabled:opacity-50">
-                    <i class="fa-solid fa-video"></i>
-                    <span id="cameraBtnText">開啟預設鏡頭</span>
-                </button>
-            </div>
+    <div class="controls">
+      <button id="startBtn">開始</button>
+      <button id="switchBtn">切換前 / 後鏡頭</button>
+      <div class="jaw-control">
+        <div class="jaw-label">
+          <span>JawOpen</span>
+          <strong id="jawValue">0.10</strong>
         </div>
-    </header>
+        <input
+          id="jawSlider"
+          type="range"
+          min="0"
+          max="1"
+          step="0.01"
+          value="0.10"
+          aria-label="JawOpen 門檻"
+        />
+      </div>
+    </div>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+    <div class="duration-controls">
+      <button class="duration-btn active" data-minutes="3">3 分鐘開始</button>
+      <button class="duration-btn" data-minutes="5">5 分鐘開始</button>
+      <button class="duration-btn" data-minutes="10">10 分鐘開始</button>
+      <button id="viewRecordsBtn">檢視記錄</button>
+    </div>
 
-        <!-- Left Column: Camera Viewport & Main HUD (8 Cols) -->
-        <section class="lg:col-span-8 flex flex-col space-y-4">
-            
-            <!-- Canvas Main Container -->
-            <div id="viewportContainer" class="relative w-full bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center min-h-[380px] md:min-h-[500px] transition-all">
-                
-                <video id="inputVideo" class="hidden" playsinline></video>
-                <canvas id="outputCanvas" class="w-full h-full object-contain mirror transition-transform duration-300"></canvas>
+    <section class="panel">
+      <div class="stats">
+        <div class="stat">
+          <div class="label">記錄時間</div>
+          <div id="recordTime" class="value">00:00</div>
+        </div>
+        <div class="stat">
+          <div class="label">張開總秒數</div>
+          <div id="openTotal" class="value">0.00</div>
+        </div>
+        <div class="stat">
+          <div class="label">張開次數</div>
+          <div id="openCount" class="value">0</div>
+        </div>
+      </div>
 
-                <div id="recordingTag" class="hidden absolute top-4 right-4 bg-rose-600/90 border border-rose-400 text-white px-3 py-1.5 rounded-full text-xs font-mono font-bold flex items-center space-x-2 animate-pulse z-30">
-                    <span class="w-2.5 h-2.5 rounded-full bg-white"></span>
-                    <span id="recStatusText">事件觸發：錄製中 (4s)</span>
-                </div>
+      <div id="status" class="status">正在載入 MediaPipe…</div>
+      <div id="gallery" class="gallery"></div>
+    </section>
 
-                <div id="loadingOverlay" class="absolute inset-0 bg-slate-950/90 backdrop-blur-sm flex flex-col items-center justify-center z-20 transition-opacity duration-300">
-                    <div class="relative w-16 h-16 mb-4">
-                        <div class="absolute inset-0 rounded-full border-4 border-cyan-500/20"></div>
-                        <div class="absolute inset-0 rounded-full border-4 border-cyan-400 border-t-transparent animate-spin"></div>
-                    </div>
-                    <p class="text-sm font-medium text-slate-300" id="loadingMsg">正在載入 MediaPipe FaceMesh & FFmpeg 模型...</p>
-                    <p class="text-xs text-slate-500 mt-1 text-center px-4">請允許瀏覽器存取鏡頭權限<br>(首次載入模組可能需要幾秒鐘)</p>
-                </div>
+    <section id="recordsPanel" class="records-panel">
+      <div class="records-header">
+        <h2>目前記錄</h2>
+        <button id="closeRecordsBtn">關閉</button>
+      </div>
+      <div id="recordsSummary" class="records-summary"></div>
+      <div class="records-table-wrap">
+        <table class="records-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>張開時間</th>
+              <th>閉上時間</th>
+              <th>張開秒數</th>
+              <th>照片</th>
+            </tr>
+          </thead>
+          <tbody id="recordsBody"></tbody>
+        </table>
+      </div>
+    </section>
 
-                <div class="absolute top-4 left-4 pointer-events-none z-10 flex flex-col space-y-2">
-                    <div class="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-slate-700/50 text-xs font-mono text-cyan-300 flex items-center space-x-3">
-                        <span>FPS: <strong id="fpsVal" class="text-white">0</strong></span>
-                        <span class="text-slate-600">|</span>
-                        <span>本次違規: <strong id="openCountVal" class="text-rose-400 font-bold text-sm">0</strong></span>
-                    </div>
-                </div>
+    <section id="result" class="panel result">
+      <h2>本次短影片</h2>
+      <video id="resultVideo" controls playsinline></video>
+      <div id="videoSummary" class="status"></div>
+      <div class="download-row">
+        <a id="downloadVideo" class="download" href="#" download>下載影片</a>
+      </div>
+      <div class="note">
+        影片格式會依瀏覽器支援自動選擇 MP4 或 WebM。每張照片停留 1 秒。
+      </div>
+    </section>
 
-                <div class="absolute bottom-4 right-4 z-10 flex items-center space-x-2 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-xl border border-slate-700/50">
-                    <button id="mirrorToggleBtn" class="p-2 rounded-lg hover:bg-slate-800 text-slate-300 hover:text-white text-xs transition text-cyan-400" title="水平翻轉鏡頭">
-                        <i class="fa-solid fa-arrows-left-right"></i>
-                    </button>
-                    <button id="soundTestBtn" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs transition" title="測試聲音提醒">
-                        <i class="fa-solid fa-volume-high"></i>
-                        <span>測試聲音</span>
-                    </button>
-                </div>
-            </div>
+    <canvas id="workCanvas" hidden></canvas>
+    <canvas id="videoCanvas" hidden></canvas>
+  </main>
 
-            <!-- Real-time Status Gauge Cards -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div class="bg-cyber-card border border-cyber-border rounded-xl p-3.5 flex flex-col justify-between relative overflow-hidden">
-                    <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
-                        <span>嘴巴張開度</span>
-                        <i class="fa-regular fa-face-surprise text-pink-400"></i>
-                    </div>
-                    <div class="text-2xl font-mono font-bold text-white" id="mouthOpenVal">0%</div>
-                    <div class="w-full bg-slate-800 h-2 rounded-full mt-2 overflow-hidden">
-                        <div id="mouthBar" class="bg-pink-500 h-full w-0 transition-all duration-75"></div>
-                    </div>
-                </div>
+  <script type="module">
+    import {
+      FaceLandmarker,
+      FilesetResolver
+    } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/vision_bundle.mjs";
 
-                <div class="bg-cyber-card border border-cyber-border rounded-xl p-3.5 flex flex-col justify-between">
-                    <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
-                        <span>持續張嘴計時</span>
-                        <i class="fa-solid fa-stopwatch text-amber-400"></i>
-                    </div>
-                    <div class="text-2xl font-mono font-bold text-amber-400" id="holdTimerVal">0.0s / 2.0s</div>
-                    <div class="w-full bg-slate-800 h-2 rounded-full mt-2 overflow-hidden">
-                        <div id="holdTimerBar" class="bg-amber-400 h-full w-0 transition-all duration-75"></div>
-                    </div>
-                </div>
+    const $ = (s) => document.querySelector(s);
 
-                <div class="bg-cyber-card border border-cyber-border rounded-xl p-3.5 flex flex-col justify-between">
-                    <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
-                        <span>警示總次數</span>
-                        <i class="fa-solid fa-triangle-exclamation text-rose-400"></i>
-                    </div>
-                    <div class="text-2xl font-mono font-bold text-rose-400" id="totalAlertsVal">0 次</div>
-                    <div class="text-[10px] text-slate-500 mt-1">持續 2 秒則計入一次</div>
-                </div>
+    const camera = $("#camera");
+    const ratioBar = $("#ratioBar");
+    const ratioRed = $("#ratioRed");
+    const ratioLabel = $("#ratioLabel");
+    const startBtn = $("#startBtn");
+    const switchBtn = $("#switchBtn");
+    const jawSlider = $("#jawSlider");
+    const jawValue = $("#jawValue");
+    const mouthBadge = $("#mouthBadge");
+    const scoreBadge = $("#scoreBadge");
+    const recordTimeEl = $("#recordTime");
+    const openTotalEl = $("#openTotal");
+    const openCountEl = $("#openCount");
+    const statusEl = $("#status");
+    const gallery = $("#gallery");
+    const result = $("#result");
+    const durationButtons = [...document.querySelectorAll(".duration-btn")];
+    const viewRecordsBtn = $("#viewRecordsBtn");
+    const recordsPanel = $("#recordsPanel");
+    const closeRecordsBtn = $("#closeRecordsBtn");
+    const recordsSummary = $("#recordsSummary");
+    const recordsBody = $("#recordsBody");
+    const resultVideo = $("#resultVideo");
+    const videoSummary = $("#videoSummary");
+    const downloadVideo = $("#downloadVideo");
+    const workCanvas = $("#workCanvas");
+    const videoCanvas = $("#videoCanvas");
 
-                <div class="bg-cyber-card border border-cyber-border rounded-xl p-3.5 flex flex-col justify-between overflow-hidden">
-                    <div class="flex items-center justify-between text-slate-400 text-xs mb-1">
-                        <span>FFmpeg 狀態</span>
-                        <i class="fa-solid fa-file-video text-cyan-400"></i>
-                    </div>
-                    <div class="text-xs font-semibold text-amber-400 mt-1" id="ffmpegStatusText">準備中...</div>
-                    <div class="text-[9px] text-slate-500 mt-1 truncate">關閉鏡頭自動合併影片</div>
-                </div>
-            </div>
-        </section>
+    // 需求：「超過一半算張開」
+    // MediaPipe jawOpen 分數高於目前滑桿門檻時，視為嘴巴張開。
+    let OPEN_THRESHOLD = 0.10;
 
-        <!-- Right Column: Settings & Event Recordings List (4 Cols) -->
-        <aside class="lg:col-span-4 flex flex-col space-y-5">
-            
-            <div class="bg-cyber-card border border-cyber-border rounded-2xl p-4 shadow-lg space-y-4">
-                <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2 border-b border-slate-800 pb-2">
-                    <i class="fa-solid fa-sliders text-cyan-400"></i>
-                    <span>偵測與提醒參數設定</span>
-                </h2>
+    // 為避免臨界值抖動造成重複觸發，狀態需維持一小段時間才確認。
+    const STABLE_MS = 180;
 
-                <div class="space-y-4 text-xs">
-                    <div>
-                        <div class="flex justify-between text-slate-300 mb-1">
-                            <span>張嘴判定門檻 (Openness)</span>
-                            <span id="thresholdVal" class="font-mono text-cyan-400 font-bold">35%</span>
-                        </div>
-                        <input type="range" id="mouthThreshold" min="20" max="70" value="35" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400">
-                    </div>
+    let faceLandmarker = null;
+    let stream = null;
+    let facingMode = "user"; // user = 前鏡頭, environment = 後鏡頭
+    let detecting = false;
+    let lastVideoTime = -1;
 
-                    <div class="space-y-2">
-                        <label class="block text-slate-300">提醒警示音樣式</label>
-                        <select id="soundTypeSelect" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-slate-200 focus:outline-none focus:border-cyan-500">
-                            <option value="speech" selected>真人語音提醒 ("請閉上嘴巴")</option>
-                            <option value="beep">高頻警示嗶嗶聲 (Beep)</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
+    let isRecording = false;
+    let recordStartPerf = 0;
+    let recordEndPerf = 0;
+    let timerId = null;
+    let autoStopTimerId = null;
+    let selectedDurationMinutes = 3;
 
-            <div id="recordsPanel" class="relative bg-cyber-card border border-cyber-border rounded-2xl p-4 shadow-lg flex-1 flex flex-col justify-between min-h-[300px]">
-                
-                <div id="listLoadingOverlay">
-                    <div class="relative w-12 h-12 mb-3">
-                        <div class="absolute inset-0 rounded-full border-4 border-cyan-500/20"></div>
-                        <div class="absolute inset-0 rounded-full border-4 border-cyan-400 border-t-transparent animate-spin"></div>
-                    </div>
-                    <p class="text-sm font-medium text-cyan-300" id="mergingStatusText">正在整合本次監測錄影...</p>
-                    <p class="text-[10px] text-slate-500 mt-1">使用本地 FFmpeg 進行合併，請稍候</p>
-                </div>
+    let mouthConfirmedOpen = false;
+    let pendingState = null;
+    let pendingSince = 0;
 
-                <div class="flex-1 flex flex-col">
-                    <div class="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
-                        <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-                            <i class="fa-solid fa-film text-rose-500"></i>
-                            <span>違規事件短片 (前後2秒)</span>
-                        </h2>
-                        <span id="recordCountBadge" class="bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full text-[10px] font-mono">0 個影片</span>
-                    </div>
+    let currentOpenEpisode = null;
+    let episodes = [];
+    let openTotalSeconds = 0;
+    let lastRatioSamplePerf = 0;
+    let accumulatedOpenMs = 0;
 
-                    <div id="recordsContainer" class="space-y-2.5 flex-1 overflow-y-auto pr-1 max-h-[300px]">
-                        <div id="emptyRecordsNotice" class="text-center py-8 border border-dashed border-slate-800 rounded-xl">
-                            <i class="fa-solid fa-video-slash text-2xl text-slate-600 mb-2"></i>
-                            <p class="text-xs text-slate-500">尚未記錄到張嘴違規事件</p>
-                        </div>
-                    </div>
-                </div>
+    let videoObjectUrl = null;
 
-                <div id="finalDownloadContainer" class="mt-4 pt-3 border-t border-slate-800 hidden flex-col space-y-2">
-                    <p class="text-[10px] text-emerald-400 text-center">合併完成！下方按鈕可下載本次整合影片。</p>
-                    <a id="finalDownloadBtn" href="#" download="monitoring_session_merged.webm" class="w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-sm font-bold rounded-xl transition flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/20">
-                        <i class="fa-solid fa-cloud-download-alt text-lg"></i>
-                        <span id="finalBtnText">下載整合影片</span>
-                    </a>
-                </div>
-            </div>
-        </aside>
-    </main>
+    function updateRatioBar(perfNow = performance.now()) {
+      if (!isRecording || !recordStartPerf) {
+        ratioRed.style.width = "0%";
+        ratioLabel.textContent = "閉嘴 100.0%";
+        return;
+      }
 
-    <footer class="border-t border-slate-800 bg-cyber-card py-4 text-center text-xs text-slate-500">
-        <p>基於 MediaPipe Face Mesh & FFmpeg.wasm | 所有運算與錄影皆在瀏覽器本地端進行，保護隱私</p>
-    </footer>
+      const elapsedMs = Math.max(1, perfNow - recordStartPerf);
 
-    <div id="toastContainer" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 z-50 flex flex-col space-y-2 pointer-events-none"></div>
-
-    <script>
-        // DOM Elements
-        const videoEl = document.getElementById('inputVideo');
-        const canvasEl = document.getElementById('outputCanvas');
-        const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
-        const viewportContainer = document.getElementById('viewportContainer');
-        
-        // Status & UI
-        const statusBadge = document.getElementById('statusBadge');
-        const statusText = document.getElementById('statusText');
-        const toggleCameraBtn = document.getElementById('toggleCameraBtn');
-        const cameraBtnText = document.getElementById('cameraBtnText');
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        const recordingTag = document.getElementById('recordingTag');
-        const listLoadingOverlay = document.getElementById('listLoadingOverlay');
-        const mergingStatusText = document.getElementById('mergingStatusText');
-        
-        // Settings
-        const mouthThreshold = document.getElementById('mouthThreshold');
-        const thresholdVal = document.getElementById('thresholdVal');
-        const soundTypeSelect = document.getElementById('soundTypeSelect');
-
-        // Records & Download
-        const recordsContainer = document.getElementById('recordsContainer');
-        const emptyRecordsNotice = document.getElementById('emptyRecordsNotice');
-        const recordCountBadge = document.getElementById('recordCountBadge');
-        const finalDownloadContainer = document.getElementById('finalDownloadContainer');
-        const finalDownloadBtn = document.getElementById('finalDownloadBtn');
-        const finalBtnText = document.getElementById('finalBtnText');
-
-        // State Variables
-        let camera = null;
-        let faceMesh = null;
-        let isRunning = false;
-        let isMirrored = true;
-        
-        // FPS Calc
-        let lastFrameTime = performance.now();
-        let frameCount = 0;
-
-        // FFmpeg
-        let ffmpeg = null;
-        let isFfmpegReady = false;
-
-        // Monitoring Logic
-        let mouthOpenStartTime = null; 
-        let isHoldingOpen = false;
-        let violationCount = 0;
-
-        // Video Recording Buffer Logic
-        const FPS = 20; // Target FPS for recording
-        const BUFFER_FRAMES = FPS * 2; // 2 seconds before
-        let frameBuffer = []; // Circular buffer storing WebP DataURLs to save memory
-        
-        let isRecordingEvent = false;
-        let postFramesLeft = 0;
-        let currentEventFrames = [];
-        let currentEventCount = 0;
-        let currentEventTimeStr = "";
-
-        let recordedClips = []; // Store blob info
-        let sessionFilenames = []; // Filenames for FFmpeg
-
-        // --- Utility: Toast ---
-        function showToast(msg, type = 'info') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            let colors = type === 'success' ? 'bg-emerald-950 text-emerald-300 border-emerald-500/50' :
-                         type === 'error' ? 'bg-rose-950 text-rose-300 border-rose-500/50' : 'bg-slate-900 text-slate-200 border-slate-700';
-            let icon = type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-info-circle';
-            
-            toast.className = `px-4 py-2.5 rounded-xl shadow-xl text-xs font-medium backdrop-blur-md transition-all duration-300 transform translate-y-4 opacity-0 flex items-center space-x-2 border pointer-events-auto ${colors}`;
-            toast.innerHTML = `<i class="fa-solid ${icon}"></i><span>${msg}</span>`;
-            container.appendChild(toast);
-            
-            requestAnimationFrame(() => toast.classList.remove('translate-y-4', 'opacity-0'));
-            setTimeout(() => {
-                toast.classList.add('opacity-0', 'translate-y-2');
-                setTimeout(() => toast.remove(), 300);
-            }, 3000);
+      if (lastRatioSamplePerf > 0) {
+        const delta = Math.max(0, perfNow - lastRatioSamplePerf);
+        if (mouthConfirmedOpen) {
+          accumulatedOpenMs += delta;
         }
+      }
+      lastRatioSamplePerf = perfNow;
 
-        // --- Utility: Audio Alert ---
-        function playAlertSound() {
-            const type = soundTypeSelect.value;
-            if (type === 'beep') {
-                const actx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = actx.createOscillator();
-                const gain = actx.createGain();
-                osc.connect(gain); gain.connect(actx.destination);
-                osc.type = 'square';
-                osc.frequency.setValueAtTime(800, actx.currentTime);
-                osc.frequency.exponentialRampToValueAtTime(300, actx.currentTime + 0.2);
-                gain.gain.setValueAtTime(0.1, actx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + 0.2);
-                osc.start(); osc.stop(actx.currentTime + 0.2);
-            } else {
-                if ('speechSynthesis' in window) {
-                    window.speechSynthesis.cancel();
-                    const msg = new SpeechSynthesisUtterance("請閉上嘴巴");
-                    msg.lang = "zh-TW"; msg.rate = 1.2;
-                    window.speechSynthesis.speak(msg);
-                }
-            }
-        }
+      const openRatio = Math.min(1, accumulatedOpenMs / elapsedMs);
+      const closedRatio = Math.max(0, 1 - openRatio);
 
-        function updateUIStatus(state, text) {
-            statusText.textContent = text;
-            statusBadge.className = 'flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border ';
-            if (state === 'active') statusBadge.classList.add('bg-emerald-500/10', 'border-emerald-500/30', 'text-emerald-400');
-            else if (state === 'warn') statusBadge.classList.add('bg-amber-500/10', 'border-amber-500/30', 'text-amber-400');
-            else if (state === 'error') statusBadge.classList.add('bg-rose-500/10', 'border-rose-500/30', 'text-rose-400');
-            else statusBadge.classList.add('bg-cyan-500/10', 'border-cyan-500/30', 'text-cyan-400');
-        }
+      ratioRed.style.width = `${(openRatio * 100).toFixed(2)}%`;
+      ratioLabel.textContent = `閉嘴 ${(closedRatio * 100).toFixed(1)}%`;
+    }
 
-        async function initFFmpeg() {
-            const el = document.getElementById('ffmpegStatusText');
-            try {
-                const { FFmpeg } = window.FFmpeg;
-                ffmpeg = new FFmpeg();
-                
-                ffmpeg.on('log', ({ message }) => console.log('[FFmpeg]', message));
-                ffmpeg.on('progress', ({ progress }) => {
-                    const p = Math.round(progress * 100);
-                    mergingStatusText.textContent = `正在處理影片... ${p}%`;
-                });
+    function fmtMMSS(seconds) {
+      const s = Math.max(0, Math.floor(seconds));
+      const mm = String(Math.floor(s / 60)).padStart(2, "0");
+      const ss = String(s % 60).padStart(2, "0");
+      return `${mm}:${ss}`;
+    }
 
-                const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                await ffmpeg.load({
-                    coreURL: await FFmpegUtil.toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                    wasmURL: await FFmpegUtil.toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                });
-                
-                isFfmpegReady = true;
-                el.textContent = "FFmpeg: 載入成功 (支援合併)";
-                el.classList.replace('text-amber-400', 'text-emerald-400');
-            } catch (err) {
-                console.warn("FFmpeg failed to load. Likely due to missing Cross-Origin Isolation headers in this environment.", err);
-                isFfmpegReady = false;
-                el.textContent = "FFmpeg: 載入失敗 (無法合併)";
-                el.classList.replace('text-amber-400', 'text-rose-400');
-                showToast("瀏覽器安全性限制，無法使用自動合併功能，但仍可單獨下載片段。", "warn");
-            }
-        }
+    function fmtSec(seconds) {
+      return Number(seconds).toFixed(2);
+    }
 
-        async function initApp() {
-            // Init MediaPipe
-            faceMesh = new FaceMesh({
-                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-            });
-            faceMesh.setOptions({
-                maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
-            });
-            faceMesh.onResults(onResults);
+    function nowRelativeSeconds(perf = performance.now()) {
+      return isRecording
+        ? (perf - recordStartPerf) / 1000
+        : Math.max(0, (recordEndPerf - recordStartPerf) / 1000);
+    }
 
-            // Try Init FFmpeg
-            await initFFmpeg();
+    function beep(durationMs = 180, frequency = 880) {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
 
-            loadingOverlay.classList.add('hidden');
-            updateUIStatus('ready', '系統就緒');
-        }
+        osc.type = "sine";
+        osc.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + durationMs / 1000);
 
-        function calculateMouthOpenness(landmarks) {
-            // 嘴唇內側特徵點
-            const upperLip = landmarks[13];
-            const lowerLip = landmarks[14];
-            const leftCorner = landmarks[61];
-            const rightCorner = landmarks[291];
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + durationMs / 1000 + 0.03);
+        osc.onended = () => ctx.close();
+      } catch (e) {
+        console.warn("beep failed", e);
+      }
+    }
 
-            const vDist = Math.hypot(upperLip.x - lowerLip.x, upperLip.y - lowerLip.y);
-            const hDist = Math.hypot(leftCorner.x - rightCorner.x, leftCorner.y - rightCorner.y);
-            
-            // MAR (Mouth Aspect Ratio)
-            const mar = vDist / (hDist || 0.1);
-            
-            // 轉換為 0-100% (基準值依經驗調整，MAR > 0.1 開始算張開)
-            let percent = ((mar - 0.05) / 0.4) * 100;
-            return Math.min(Math.max(percent, 0), 100);
-        }
+    function updateDurationButtons() {
+      jawSlider.addEventListener("input", () => {
+      OPEN_THRESHOLD = Number(jawSlider.value);
+      jawValue.textContent = OPEN_THRESHOLD.toFixed(2);
 
-        // 處理畫面並壓上浮水印，回傳 DataURL 以節省記憶體
-        function getWatermarkedFrame(image, currentViolationNum) {
-            // 確保畫布尺寸一致
-            if(canvasEl.width !== image.width) {
-                canvasEl.width = image.width;
-                canvasEl.height = image.height;
-            }
-            
-            ctx.save();
-            // 處理鏡像
-            if (isMirrored) {
-                ctx.translate(canvasEl.width, 0);
-                ctx.scale(-1, 1);
-            }
-            ctx.drawImage(image, 0, 0, canvasEl.width, canvasEl.height);
-            ctx.restore();
+      if (isRecording) {
+        statusEl.textContent =
+          `記錄中：偵測時間 ${selectedDurationMinutes} 分鐘；jawOpen > ${OPEN_THRESHOLD.toFixed(2)} 即算張開。`;
+      } else {
+        statusEl.textContent =
+          `JawOpen 門檻已調整為 ${OPEN_THRESHOLD.toFixed(2)}。`;
+      }
+    });
 
-            // 加上文字浮水印
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-            ctx.fillRect(10, 10, 320, 70);
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(10, 10, 320, 70);
-            
-            ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 16px sans-serif';
-            const timeStr = new Date().toLocaleTimeString('zh-TW', {hour12:false});
-            ctx.fillText(`記錄時間: ${timeStr}`, 20, 40);
-            
-            ctx.fillStyle = '#f87171';
-            const vText = currentViolationNum > 0 ? `連續張嘴次數: 第 ${currentViolationNum} 次` : '狀態: 正常監測中';
-            ctx.fillText(vText, 20, 65);
+    durationButtons.forEach(btn => {
+        const mins = Number(btn.dataset.minutes);
+        btn.classList.toggle("active", mins === selectedDurationMinutes);
+        btn.disabled = isRecording;
+      });
+    }
 
-            // 使用 webp 壓縮以節省儲存 4 秒鐘畫面的記憶體
-            return canvasEl.toDataURL('image/webp', 0.8);
-        }
+    function renderRecords() {
+      const totalRecordSec = isRecording
+        ? (performance.now() - recordStartPerf) / 1000
+        : Math.max(0, (recordEndPerf - recordStartPerf) / 1000);
 
-        function triggerRecording() {
-            if (isRecordingEvent) return; // 防呆
-            isRecordingEvent = true;
-            postFramesLeft = FPS * 2; // 再錄製 2 秒
-            currentEventCount = violationCount;
-            currentEventTimeStr = new Date().toLocaleTimeString('zh-TW', {hour12:false});
-            
-            // 將之前的緩衝複製過來 (前2秒)
-            currentEventFrames = [...frameBuffer];
-            
-            recordingTag.classList.remove('hidden');
-            viewportContainer.classList.add('alert-active');
-        }
+      const effectiveOpen = openTotalSeconds + (
+        isRecording && currentOpenEpisode
+          ? Math.max(0, (performance.now() - currentOpenEpisode.startPerf) / 1000)
+          : 0
+      );
 
-        async function compileVideoFromFrames() {
-            isRecordingEvent = false;
-            recordingTag.classList.add('hidden');
-            viewportContainer.classList.remove('alert-active');
-            
-            const framesToEncode = [...currentEventFrames];
-            currentEventFrames = []; // 清空準備下次
+      recordsSummary.textContent =
+        `偵測設定：${selectedDurationMinutes} 分鐘｜目前記錄時間：${fmtMMSS(totalRecordSec)}｜` +
+        `已完成張開事件：${episodes.length} 次｜累計張開：約 ${fmtSec(effectiveOpen)} 秒`;
 
-            if(framesToEncode.length === 0) return;
+      recordsBody.innerHTML = "";
 
-            // 建立背景畫布供 MediaRecorder 擷取
-            const offscreenCanvas = document.createElement('canvas');
-            offscreenCanvas.width = canvasEl.width;
-            offscreenCanvas.height = canvasEl.height;
-            const offCtx = offscreenCanvas.getContext('2d');
-            
-            const stream = offscreenCanvas.captureStream(FPS);
-            const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
-            const chunks = [];
-            
-            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-            
-            recorder.onstop = async () => {
-                const blob = new Blob(chunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const id = Date.now();
-                
-                // 新增至 UI 清單
-                recordedClips.unshift({ id, url, count: currentEventCount, time: currentEventTimeStr, blob });
-                updateRecordsUI();
+      episodes.forEach((ep, index) => {
+        const tr = document.createElement("tr");
 
-                // 寫入 FFmpeg 虛擬檔案系統以供後續合併
-                if (isFfmpegReady) {
-                    const filename = `clip_${id}.webm`;
-                    try {
-                        const fileData = await FFmpegUtil.fetchFile(blob);
-                        await ffmpeg.writeFile(filename, fileData);
-                        sessionFilenames.push(filename);
-                        showToast(`事件 #${currentEventCount} 已加入合併佇列`, 'success');
-                    } catch (e) {
-                        console.error("FFmpeg write error", e);
-                    }
-                } else {
-                    showToast(`事件 #${currentEventCount} 短片已生成`, 'success');
-                }
-            };
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = ep.finalCanvas.toDataURL("image/jpeg", 0.82);
 
-            recorder.start();
+        const photoTd = document.createElement("td");
+        photoTd.appendChild(img);
 
-            // 依序將圖片畫上 canvas 以進行錄製 (模擬時間流逝)
-            let i = 0;
-            const img = new Image();
-            
-            function renderNextFrame() {
-                if (i < framesToEncode.length) {
-                    img.onload = () => {
-                        offCtx.drawImage(img, 0, 0);
-                        i++;
-                        // 使用 setTimeout 控制編碼速度，符合目標 FPS
-                        setTimeout(renderNextFrame, 1000 / FPS);
-                    };
-                    img.src = framesToEncode[i];
-                } else {
-                    recorder.stop();
-                }
-            }
-            renderNextFrame();
-        }
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${fmtMMSS(ep.startSec)}</td>
+          <td>${fmtMMSS(ep.endSec)}</td>
+          <td>${fmtSec(ep.duration)} 秒</td>
+        `;
+        tr.appendChild(photoTd);
+        recordsBody.appendChild(tr);
+      });
 
-        function onResults(results) {
-            if (!isRunning) return;
+      if (currentOpenEpisode) {
+        const tr = document.createElement("tr");
+        const currentSec = Math.max(
+          0,
+          (performance.now() - currentOpenEpisode.startPerf) / 1000
+        );
+        tr.innerHTML = `
+          <td>${episodes.length + 1}</td>
+          <td>${fmtMMSS(currentOpenEpisode.startSec)}</td>
+          <td>尚未閉上</td>
+          <td>${fmtSec(currentSec)} 秒（進行中）</td>
+          <td>已拍攝，閉上後完成標註</td>
+        `;
+        recordsBody.appendChild(tr);
+      }
 
-            // FPS 計算
-            const now = performance.now();
-            frameCount++;
-            if (now - lastFrameTime >= 1000) {
-                document.getElementById('fpsVal').textContent = frameCount;
-                frameCount = 0; lastFrameTime = now;
-            }
+      if (!episodes.length && !currentOpenEpisode) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td colspan="5">目前尚無嘴巴張開記錄。</td>`;
+        recordsBody.appendChild(tr);
+      }
+    }
 
-            // 取得帶有浮水印的影格 (無論是否違規都持續記錄到 Buffer)
-            // 如果正在錄製事件後的 2 秒，我們要在畫面上標示這是第幾次違規
-            const frameData = getWatermarkedFrame(results.image, isRecordingEvent ? currentEventCount : 0);
+    async function initMediaPipe() {
+      try {
+        statusEl.textContent = "載入 MediaPipe 模型中…";
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+        );
 
-            // 1. 維護錄影前緩衝區 (Pre-buffer)
-            frameBuffer.push(frameData);
-            if (frameBuffer.length > BUFFER_FRAMES) frameBuffer.shift();
-
-            // 2. 如果正在錄製事件 (Post-buffer)
-            if (isRecordingEvent) {
-                currentEventFrames.push(frameData);
-                postFramesLeft--;
-                if (postFramesLeft <= 0) {
-                    compileVideoFromFrames(); // 湊滿前後 4 秒，開始轉檔
-                }
-            }
-
-            // --- 判斷張嘴邏輯 ---
-            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                const openPercent = calculateMouthOpenness(results.multiFaceLandmarks[0]);
-                const threshold = parseInt(mouthThreshold.value);
-
-                document.getElementById('mouthOpenVal').textContent = `${Math.round(openPercent)}%`;
-                document.getElementById('mouthBar').style.width = `${openPercent}%`;
-
-                if (openPercent >= threshold) {
-                    document.getElementById('mouthBar').classList.replace('bg-pink-500', 'bg-rose-500');
-                    if (!mouthOpenStartTime) mouthOpenStartTime = now;
-                    
-                    const elapsedSec = (now - mouthOpenStartTime) / 1000;
-                    const progress = Math.min((elapsedSec / 2.0) * 100, 100);
-                    
-                    document.getElementById('holdTimerVal').textContent = `${elapsedSec.toFixed(1)}s / 2.0s`;
-                    document.getElementById('holdTimerBar').style.width = `${progress}%`;
-
-                    // 觸發條件：持續 2 秒
-                    if (elapsedSec >= 2.0 && !isHoldingOpen) {
-                        isHoldingOpen = true;
-                        violationCount++;
-                        document.getElementById('openCountVal').textContent = violationCount;
-                        document.getElementById('totalAlertsVal').textContent = `${violationCount} 次`;
-                        
-                        playAlertSound();
-                        triggerRecording();
-                    }
-                } else {
-                    resetMouthState();
-                }
-            } else {
-                resetMouthState();
-                document.getElementById('mouthOpenVal').textContent = `0%`;
-                document.getElementById('mouthBar').style.width = `0%`;
-            }
-        }
-
-        function resetMouthState() {
-            mouthOpenStartTime = null;
-            isHoldingOpen = false;
-            document.getElementById('mouthBar').classList.replace('bg-rose-500', 'bg-pink-500');
-            document.getElementById('holdTimerVal').textContent = `0.0s / 2.0s`;
-            document.getElementById('holdTimerBar').style.width = `0%`;
-        }
-
-        function updateRecordsUI() {
-            recordCountBadge.textContent = `${recordedClips.length} 個影片`;
-            if (recordedClips.length === 0) {
-                emptyRecordsNotice.classList.remove('hidden');
-                recordsContainer.innerHTML = '';
-                recordsContainer.appendChild(emptyRecordsNotice);
-                return;
-            }
-            
-            emptyRecordsNotice.classList.add('hidden');
-            recordsContainer.innerHTML = '';
-            
-            recordedClips.forEach(clip => {
-                const div = document.createElement('div');
-                div.className = 'bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col space-y-2 text-xs';
-                div.innerHTML = `
-                    <div class="flex justify-between text-slate-300">
-                        <span class="font-bold text-rose-400">事件 #${clip.count}</span>
-                        <span class="font-mono text-slate-500">${clip.time}</span>
-                    </div>
-                    <video src="${clip.url}" controls class="w-full rounded-lg bg-black h-24 object-contain"></video>
-                    <div class="flex justify-between items-center pt-1 text-[10px]">
-                        <span class="text-slate-500">長度: 4s</span>
-                        <a href="${clip.url}" download="Evt_${clip.count}_${clip.id}.webm" class="text-cyan-400 hover:text-cyan-300">
-                            <i class="fa-solid fa-download mr-1"></i>下載
-                        </a>
-                    </div>
-                `;
-                recordsContainer.appendChild(div);
-            });
-        }
-
-        async function mergeVideosOnStop() {
-            if (!isFfmpegReady || sessionFilenames.length === 0) return;
-
-            listLoadingOverlay.style.display = 'flex';
-            finalDownloadContainer.classList.add('hidden');
-
-            try {
-                // 建立 FFmpeg concat 用的文字檔
-                let listText = sessionFilenames.map(f => `file '${f}'`).join('\n');
-                await ffmpeg.writeFile('list.txt', new TextEncoder().encode(listText));
-
-                // 執行無損合併
-                mergingStatusText.textContent = '正在合併影片...';
-                await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'output.webm']);
-
-                // 讀取結果
-                const data = await ffmpeg.readFile('output.webm');
-                const finalBlob = new Blob([data.buffer], { type: 'video/webm' });
-                const finalUrl = URL.createObjectURL(finalBlob);
-
-                // 更新下載按鈕
-                finalDownloadBtn.href = finalUrl;
-                finalDownloadContainer.classList.remove('hidden');
-                showToast('所有事件影片已成功整合！', 'success');
-
-                // 清理 FFmpeg 記憶體檔案 (可選)
-                sessionFilenames.forEach(f => ffmpeg.deleteFile(f));
-                ffmpeg.deleteFile('list.txt');
-                ffmpeg.deleteFile('output.webm');
-
-            } catch (e) {
-                console.error('Merge error:', e);
-                showToast('影片合併過程發生錯誤', 'error');
-            } finally {
-                listLoadingOverlay.style.display = 'none';
-            }
-        }
-
-        async function toggleCamera() {
-            if (isRunning) {
-                // Stop
-                if(camera) { camera.stop(); camera = null; }
-                isRunning = false;
-                ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
-                
-                toggleCameraBtn.classList.replace('bg-rose-500', 'bg-cyan-500');
-                toggleCameraBtn.classList.replace('hover:bg-rose-400', 'hover:bg-cyan-400');
-                cameraBtnText.textContent = '開啟預設鏡頭';
-                updateUIStatus('ready', '就緒 (鏡頭已關閉)');
-                
-                // 關閉時觸發合併
-                if (recordedClips.length > 0) {
-                    await mergeVideosOnStop();
-                }
-
-            } else {
-                // Start
-                updateUIStatus('warn', '啟動鏡頭中...');
-                toggleCameraBtn.disabled = true;
-
-                // Reset Session Data
-                violationCount = 0;
-                document.getElementById('openCountVal').textContent = '0';
-                document.getElementById('totalAlertsVal').textContent = '0 次';
-                recordedClips = [];
-                sessionFilenames = [];
-                frameBuffer = [];
-                updateRecordsUI();
-                finalDownloadContainer.classList.add('hidden');
-
-                try {
-                    camera = new Camera(videoEl, {
-                        onFrame: async () => { if(isRunning) await faceMesh.send({ image: videoEl }); },
-                        width: 640, height: 480 // 降低解析度以提升效能與降低錄影記憶體
-                    });
-                    await camera.start();
-                    isRunning = true;
-                    
-                    toggleCameraBtn.classList.replace('bg-cyan-500', 'bg-rose-500');
-                    toggleCameraBtn.classList.replace('hover:bg-cyan-400', 'hover:bg-rose-400');
-                    cameraBtnText.textContent = '關閉鏡頭並結算';
-                    updateUIStatus('active', '監測進行中');
-                } catch (e) {
-                    showToast('無法存取攝影機', 'error');
-                    updateUIStatus('error', '攝影機錯誤');
-                } finally {
-                    toggleCameraBtn.disabled = false;
-                }
-            }
-        }
-
-        // Event Listeners
-        toggleCameraBtn.addEventListener('click', toggleCamera);
-        
-        document.getElementById('mirrorToggleBtn').addEventListener('click', () => {
-            isMirrored = !isMirrored;
-            document.getElementById('mirrorToggleBtn').classList.toggle('text-cyan-400', isMirrored);
-        });
-        
-        document.getElementById('soundTestBtn').addEventListener('click', playAlertSound);
-        
-        mouthThreshold.addEventListener('input', (e) => {
-            thresholdVal.textContent = `${e.target.value}%`;
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+            delegate: "GPU"
+          },
+          runningMode: "VIDEO",
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+          minFaceDetectionConfidence: 0.5,
+          minFacePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5
         });
 
-        // Start initialization on load
-        window.addEventListener('DOMContentLoaded', initApp);
+        statusEl.textContent = "MediaPipe 已就緒，請按「開始」。";
+        await startCamera();
+        if (!detecting) {
+          detecting = true;
+          requestAnimationFrame(detectLoop);
+        }
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent =
+          "MediaPipe 載入失敗。請確認網路連線，並使用 HTTPS 或 localhost 開啟此頁。";
+      }
+    }
 
-    </script>
+    async function startCamera() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("瀏覽器不支援 getUserMedia");
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+
+      const constraints = {
+        audio: false,
+        video: {
+          facingMode: { ideal: facingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      };
+
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      camera.srcObject = stream;
+      await camera.play();
+
+      camera.classList.toggle("front", facingMode === "user");
+    }
+
+    async function switchCamera() {
+      switchBtn.disabled = true;
+      try {
+        facingMode = facingMode === "user" ? "environment" : "user";
+        await startCamera();
+        lastVideoTime = -1;
+      } catch (err) {
+        console.error(err);
+        facingMode = facingMode === "user" ? "environment" : "user";
+        statusEl.textContent = "切換鏡頭失敗，可能只有一個可用鏡頭。";
+      } finally {
+        switchBtn.disabled = false;
+      }
+    }
+
+    function getJawOpenScore(result) {
+      const categories = result?.faceBlendshapes?.[0]?.categories;
+      if (!categories) return null;
+      const jaw = categories.find(
+        c => c.categoryName === "jawOpen" || c.displayName === "jawOpen"
+      );
+      return jaw?.score ?? null;
+    }
+
+    function updateMouthState(rawOpen, perfNow) {
+      const desired = rawOpen ? "open" : "closed";
+      const confirmed = mouthConfirmedOpen ? "open" : "closed";
+
+      if (desired === confirmed) {
+        pendingState = null;
+        return;
+      }
+
+      if (pendingState !== desired) {
+        pendingState = desired;
+        pendingSince = perfNow;
+        return;
+      }
+
+      if (perfNow - pendingSince >= STABLE_MS) {
+        pendingState = null;
+        if (desired === "open") {
+          confirmMouthOpen(perfNow);
+        } else {
+          confirmMouthClosed(perfNow);
+        }
+      }
+    }
+
+    function confirmMouthOpen(perfNow) {
+      mouthConfirmedOpen = true;
+      mouthBadge.textContent = "嘴巴：張開";
+      mouthBadge.className = "badge open";
+
+      if (!isRecording || currentOpenEpisode) return;
+
+      const startSec = (perfNow - recordStartPerf) / 1000;
+
+      currentOpenEpisode = {
+        startPerf: perfNow,
+        startSec,
+        // 張開確認時拍一張；閉上後再補上文字，並存成最終照片。
+        rawPhotoCanvas: captureCurrentFrame()
+      };
+
+      statusEl.textContent =
+        `偵測到嘴巴張開：${fmtMMSS(startSec)}，已拍攝照片。`;
+    }
+
+    function confirmMouthClosed(perfNow) {
+      mouthConfirmedOpen = false;
+      mouthBadge.textContent = "嘴巴：閉上";
+      mouthBadge.className = "badge closed";
+
+      if (!isRecording || !currentOpenEpisode) return;
+      finishCurrentEpisode(perfNow);
+    }
+
+    function captureCurrentFrame() {
+      const vw = camera.videoWidth || 720;
+      const vh = camera.videoHeight || 1280;
+
+      const c = document.createElement("canvas");
+      c.width = vw;
+      c.height = vh;
+      const ctx = c.getContext("2d");
+
+      if (facingMode === "user") {
+        ctx.translate(vw, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(camera, 0, 0, vw, vh);
+      return c;
+    }
+
+    function finishCurrentEpisode(endPerf) {
+      const ep = currentOpenEpisode;
+      currentOpenEpisode = null;
+
+      const endSec = Math.max(ep.startSec, (endPerf - recordStartPerf) / 1000);
+      const duration = Math.max(0, endSec - ep.startSec);
+
+      ep.endPerf = endPerf;
+      ep.endSec = endSec;
+      ep.duration = duration;
+      ep.finalCanvas = makeAnnotatedPhoto(ep);
+
+      openTotalSeconds += duration;
+      episodes.push(ep);
+
+      openTotalEl.textContent = fmtSec(openTotalSeconds);
+      openCountEl.textContent = String(episodes.length);
+      addEpisodeToGallery(ep);
+
+      statusEl.textContent =
+        `已完成第 ${episodes.length} 次：${fmtMMSS(ep.startSec)} ～ ${fmtMMSS(ep.endSec)}，共 ${fmtSec(duration)} 秒。`;
+    }
+
+    function makeAnnotatedPhoto(ep) {
+      const src = ep.rawPhotoCanvas;
+      const barH = Math.max(110, Math.round(src.height * 0.13));
+
+      const c = document.createElement("canvas");
+      c.width = src.width;
+      c.height = src.height + barH;
+
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(src, 0, 0);
+
+      const pad = Math.max(20, Math.round(c.width * 0.025));
+      const mainSize = Math.max(26, Math.round(c.width * 0.035));
+      const subSize = Math.max(23, Math.round(c.width * 0.03));
+
+      ctx.fillStyle = "#fff";
+      ctx.textBaseline = "top";
+      ctx.font = `700 ${mainSize}px system-ui, sans-serif`;
+      ctx.fillText(
+        `${fmtMMSS(ep.startSec)} ～ ${fmtMMSS(ep.endSec)}`,
+        pad,
+        src.height + Math.round(barH * 0.18)
+      );
+
+      ctx.fillStyle = "#c8d2de";
+      ctx.font = `600 ${subSize}px system-ui, sans-serif`;
+      ctx.fillText(
+        `總張開秒數：${fmtSec(ep.duration)} 秒`,
+        pad,
+        src.height + Math.round(barH * 0.56)
+      );
+
+      return c;
+    }
+
+    function addEpisodeToGallery(ep) {
+      const card = document.createElement("div");
+      card.className = "shot";
+
+      const img = document.createElement("img");
+      img.src = ep.finalCanvas.toDataURL("image/jpeg", 0.92);
+
+      const caption = document.createElement("div");
+      caption.className = "caption";
+      caption.textContent =
+        `${fmtMMSS(ep.startSec)} ～ ${fmtMMSS(ep.endSec)}｜${fmtSec(ep.duration)} 秒`;
+
+      card.append(img, caption);
+      gallery.appendChild(card);
+    }
+
+    function resetSession() {
+      recordStartPerf = performance.now();
+      recordEndPerf = recordStartPerf;
+      episodes = [];
+      openTotalSeconds = 0;
+      accumulatedOpenMs = 0;
+      lastRatioSamplePerf = 0;
+      currentOpenEpisode = null;
+
+      // 以「本次開始」為新狀態基準，避免上一輪狀態殘留。
+      mouthConfirmedOpen = false;
+      pendingState = null;
+
+      gallery.innerHTML = "";
+      openTotalEl.textContent = "0.00";
+      openCountEl.textContent = "0";
+      recordTimeEl.textContent = "00:00";
+      updateRatioBar();
+      result.classList.remove("show");
+      recordsPanel.classList.remove("show");
+      if (autoStopTimerId) {
+        clearTimeout(autoStopTimerId);
+        autoStopTimerId = null;
+      }
+
+      if (videoObjectUrl) {
+        URL.revokeObjectURL(videoObjectUrl);
+        videoObjectUrl = null;
+      }
+      resultVideo.removeAttribute("src");
+      downloadVideo.removeAttribute("href");
+    }
+
+    function startRecording() {
+      if (!faceLandmarker || !stream) {
+        statusEl.textContent = "相機或 MediaPipe 尚未就緒。";
+        return;
+      }
+
+      resetSession();
+      isRecording = true;
+      lastRatioSamplePerf = recordStartPerf;
+      accumulatedOpenMs = 0;
+      updateRatioBar(recordStartPerf);
+      beep(180, 880);
+      updateDurationButtons();
+
+      startBtn.textContent = "結束";
+      startBtn.classList.add("stop");
+
+      timerId = setInterval(() => {
+        const now = performance.now();
+        recordTimeEl.textContent = fmtMMSS(nowRelativeSeconds(now));
+        updateRatioBar(now);
+      }, 200);
+
+      statusEl.textContent =
+        `記錄中：偵測時間 ${selectedDurationMinutes} 分鐘；jawOpen > ${OPEN_THRESHOLD.toFixed(2)} 即算張開。`;
+
+      autoStopTimerId = setTimeout(() => {
+        if (isRecording) {
+          statusEl.textContent = `已達 ${selectedDurationMinutes} 分鐘，正在自動停止…`;
+          stopRecording(true);
+        }
+      }, selectedDurationMinutes * 60 * 1000);
+    }
+
+    async function stopRecording(autoStopped = false) {
+      if (!isRecording) return;
+
+      const stopPerf = performance.now();
+
+      // 若按下結束時嘴巴仍在張開，將「結束」時間視為本次閉合點。
+      if (currentOpenEpisode) {
+        finishCurrentEpisode(stopPerf);
+      }
+
+      updateRatioBar(stopPerf);
+      recordEndPerf = stopPerf;
+      isRecording = false;
+      lastRatioSamplePerf = 0;
+      beep(220, 660);
+
+      if (autoStopTimerId) {
+        clearTimeout(autoStopTimerId);
+        autoStopTimerId = null;
+      }
+
+      clearInterval(timerId);
+      timerId = null;
+
+      startBtn.disabled = true;
+      switchBtn.disabled = true;
+      startBtn.textContent = "產生影片中…";
+      recordTimeEl.textContent = fmtMMSS((recordEndPerf - recordStartPerf) / 1000);
+
+      try {
+        await buildSummaryVideo();
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent =
+          "影片產生失敗；照片紀錄仍保留。此瀏覽器可能不支援 Canvas 錄影。";
+      } finally {
+        startBtn.disabled = false;
+        switchBtn.disabled = false;
+        startBtn.textContent = "開始";
+        startBtn.classList.remove("stop");
+        updateDurationButtons();
+        if (autoStopped) {
+          statusEl.textContent += `（已達 ${selectedDurationMinutes} 分鐘，自動停止）`;
+        }
+      }
+    }
+
+    async function toggleRecording() {
+      if (isRecording) {
+        await stopRecording();
+      } else {
+        startRecording();
+      }
+    }
+
+    function chooseRecordingMime() {
+      if (!window.MediaRecorder) return null;
+      const candidates = [
+        "video/mp4;codecs=avc1.42E01E",
+        "video/mp4",
+        "video/webm;codecs=vp9",
+        "video/webm;codecs=vp8",
+        "video/webm"
+      ];
+      return candidates.find(t => MediaRecorder.isTypeSupported(t)) || "";
+    }
+
+    function drawCover(ctx, img, x, y, w, h) {
+      const sw = img.width;
+      const sh = img.height;
+      const scale = Math.max(w / sw, h / sh);
+      const dw = sw * scale;
+      const dh = sh * scale;
+      const dx = x + (w - dw) / 2;
+      const dy = y + (h - dh) / 2;
+      ctx.drawImage(img, dx, dy, dw, dh);
+    }
+
+    async function buildSummaryVideo() {
+      const totalRecordSec = Math.max(
+        0.001,
+        (recordEndPerf - recordStartPerf) / 1000
+      );
+      const ratio = openTotalSeconds / totalRecordSec;
+      const ratioText =
+        `${fmtSec(openTotalSeconds)} / ${fmtSec(totalRecordSec)} = ${(ratio * 100).toFixed(1)}%`;
+
+      videoSummary.textContent =
+        `本次嘴巴張開總秒數 / 本次記錄總秒數 = ${ratioText}`;
+
+      if (episodes.length === 0) {
+        result.classList.add("show");
+        statusEl.textContent = "本次沒有偵測到完整的嘴巴張開事件，因此沒有可合成的照片。";
+        return;
+      }
+
+      if (!videoCanvas.captureStream || !window.MediaRecorder) {
+        throw new Error("MediaRecorder 或 canvas.captureStream 不支援");
+      }
+
+      const W = 720;
+      const H = 960;
+      const headerH = 110;
+      videoCanvas.width = W;
+      videoCanvas.height = H;
+
+      const ctx = videoCanvas.getContext("2d");
+      const fps = 30;
+      const stream = videoCanvas.captureStream(fps);
+      const mimeType = chooseRecordingMime();
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4_000_000 })
+        : new MediaRecorder(stream, { videoBitsPerSecond: 4_000_000 });
+
+      const chunks = [];
+      recorder.ondataavailable = e => {
+        if (e.data && e.data.size) chunks.push(e.data);
+      };
+
+      const stopped = new Promise((resolve, reject) => {
+        recorder.onstop = resolve;
+        recorder.onerror = e => reject(e.error || e);
+      });
+
+      recorder.start();
+
+      const drawFrame = (canvas) => {
+        ctx.fillStyle = "#080a0d";
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "700 27px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(
+          `本次嘴巴張開總秒數 / 本次記錄總秒數 =`,
+          W / 2,
+          34
+        );
+
+        ctx.fillStyle = "#b9c5d3";
+        ctx.font = "700 28px system-ui, sans-serif";
+        ctx.fillText(ratioText, W / 2, 76);
+
+        drawCover(ctx, canvas, 0, headerH, W, H - headerH);
+      };
+
+      // 每張照片停留 1 秒。
+      for (const ep of episodes) {
+        const start = performance.now();
+        while (performance.now() - start < 1000) {
+          drawFrame(ep.finalCanvas);
+          await new Promise(r => requestAnimationFrame(r));
+        }
+      }
+
+      recorder.stop();
+      await stopped;
+      stream.getTracks().forEach(t => t.stop());
+
+      const actualType = recorder.mimeType || mimeType || "video/webm";
+      const blob = new Blob(chunks, { type: actualType });
+
+      videoObjectUrl = URL.createObjectURL(blob);
+      resultVideo.src = videoObjectUrl;
+      downloadVideo.href = videoObjectUrl;
+
+      const ext = actualType.includes("mp4") ? "mp4" : "webm";
+      downloadVideo.download = `mouth-open-summary.${ext}`;
+
+      result.classList.add("show");
+      statusEl.textContent =
+        `完成：共 ${episodes.length} 張照片，影片約 ${episodes.length} 秒。`;
+    }
+
+    async function detectLoop() {
+      if (faceLandmarker && camera.readyState >= 2) {
+        try {
+          if (camera.currentTime !== lastVideoTime) {
+            lastVideoTime = camera.currentTime;
+
+            const perfNow = performance.now();
+            const result = faceLandmarker.detectForVideo(camera, perfNow);
+            const score = getJawOpenScore(result);
+
+            if (isRecording) updateRatioBar(perfNow);
+
+            if (score == null) {
+              scoreBadge.textContent = "jawOpen --";
+              mouthBadge.textContent = "嘴巴：未偵測";
+              mouthBadge.className = "badge closed";
+              pendingState = null;
+            } else {
+              scoreBadge.textContent = `jawOpen ${score.toFixed(2)}`;
+              const rawOpen = score > OPEN_THRESHOLD;
+
+              if (!isRecording) {
+                mouthBadge.textContent = rawOpen ? "嘴巴：張開" : "嘴巴：閉上";
+                mouthBadge.className = rawOpen ? "badge open" : "badge closed";
+              } else {
+                updateMouthState(rawOpen, perfNow);
+              }
+            }
+          }
+        } catch (err) {
+          console.error("detectForVideo error:", err);
+        }
+      }
+
+      requestAnimationFrame(detectLoop);
+    }
+
+    startBtn.addEventListener("click", toggleRecording);
+    switchBtn.addEventListener("click", switchCamera);
+
+    jawSlider.addEventListener("input", () => {
+      OPEN_THRESHOLD = Number(jawSlider.value);
+      jawValue.textContent = OPEN_THRESHOLD.toFixed(2);
+
+      if (isRecording) {
+        statusEl.textContent =
+          `記錄中：偵測時間 ${selectedDurationMinutes} 分鐘；jawOpen > ${OPEN_THRESHOLD.toFixed(2)} 即算張開。`;
+      } else {
+        statusEl.textContent =
+          `JawOpen 門檻已調整為 ${OPEN_THRESHOLD.toFixed(2)}。`;
+      }
+    });
+
+    durationButtons.forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (isRecording) return;
+        selectedDurationMinutes = Number(btn.dataset.minutes);
+        updateDurationButtons();
+        startRecording();
+      });
+    });
+
+    viewRecordsBtn.addEventListener("click", () => {
+      renderRecords();
+      recordsPanel.classList.toggle("show");
+      if (recordsPanel.classList.contains("show")) {
+        recordsPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
+    closeRecordsBtn.addEventListener("click", () => {
+      recordsPanel.classList.remove("show");
+    });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && isRecording) {
+        statusEl.textContent = "頁面進入背景，手機瀏覽器可能暫停相機或偵測。";
+      }
+    });
+
+    updateDurationButtons();
+    initMediaPipe();
+  </script>
 </body>
 </html>
