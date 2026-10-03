@@ -327,7 +327,7 @@
       <video id="camera" autoplay playsinline muted></video>
       <div class="badge-row">
         <div id="mouthBadge" class="badge closed">嘴巴：未偵測</div>
-        <div id="scoreBadge" class="badge">jawOpen 0.00</div>
+        <div id="scoreBadge" class="badge">jawOpen --</div>
       </div>
     </section>
 
@@ -652,28 +652,28 @@
           numFaces: 1,
           outputFaceBlendshapes: true,
           minFaceDetectionConfidence: 0.5,
-          minFacePresenceConfidence: 0.5,
-          minTrackingConfidence: 0.5
+          minFacePresenceConfidence: 0.25,
+          minTrackingConfidence: 0.25
         };
 
-        statusEl.textContent = "3/4 正在初始化 Face Landmarker（GPU）…";
+        statusEl.textContent = "3/4 正在初始化 Face Landmarker（CPU）…";
 
         try {
           faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath: MEDIAPIPE_MODEL_URL,
-              delegate: "GPU"
+              delegate: "CPU"
             },
             ...commonOptions
           });
-        } catch (gpuError) {
-          console.warn("GPU 初始化失敗，改用 CPU：", gpuError);
-          statusEl.textContent = "GPU 初始化失敗，改用 CPU…";
+        } catch (cpuError) {
+          console.warn("CPU 初始化失敗，改用 GPU：", cpuError);
+          statusEl.textContent = "CPU 初始化失敗，改用 GPU…";
 
           faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath: MEDIAPIPE_MODEL_URL,
-              delegate: "CPU"
+              delegate: "GPU"
             },
             ...commonOptions
           });
@@ -684,7 +684,7 @@
         await startCamera();
 
         statusEl.textContent =
-          "MediaPipe 已就緒。可按 3 / 5 / 10 分鐘開始；上方 jawOpen 會即時顯示偵測值。";
+          "MediaPipe 已就緒。可按 3 / 5 / 10 分鐘開始；jawOpen 會即時顯示。若 blendshape 中斷，會自動改用嘴唇 landmarks（顯示 · L）。";
 
         if (!detecting) {
           detecting = true;
@@ -793,18 +793,49 @@
 
     function getJawOpenScore(result) {
       const categories = result?.faceBlendshapes?.[0]?.categories;
-      if (!Array.isArray(categories) || categories.length === 0) return null;
 
-      // 正常情況依 categoryName 取得 jawOpen。
-      // MediaPipe 的 jawOpen blendshape index 為 25，因此名稱異常時可退回 index 25。
-      const jaw =
-        categories.find(c => c?.categoryName === "jawOpen") ||
-        categories.find(c => c?.displayName === "jawOpen") ||
-        categories.find(c => Number(c?.index) === 25) ||
-        categories[25];
+      if (Array.isArray(categories) && categories.length > 0) {
+        const jaw =
+          categories.find(c => c?.categoryName === "jawOpen") ||
+          categories.find(c => c?.displayName === "jawOpen") ||
+          categories.find(c => Number(c?.index) === 25) ||
+          categories[25];
 
-      const score = Number(jaw?.score);
-      return Number.isFinite(score) ? score : null;
+        const score = Number(jaw?.score);
+        if (Number.isFinite(score)) {
+          return { score, source: "blendshape" };
+        }
+      }
+
+      // 備援：若 blendshape 暫時沒有輸出，但 landmarks 還存在，
+      // 用嘴唇內側上下距離 / 嘴角寬度估算開口程度。
+      // landmarks: 13=上唇內側, 14=下唇內側, 78/308=左右嘴角附近。
+      const lm = result?.faceLandmarks?.[0];
+      if (Array.isArray(lm) && lm.length > 308) {
+        const upper = lm[13];
+        const lower = lm[14];
+        const left = lm[78];
+        const right = lm[308];
+
+        if (upper && lower && left && right) {
+          const vertical = Math.hypot(
+            (upper.x ?? 0) - (lower.x ?? 0),
+            (upper.y ?? 0) - (lower.y ?? 0)
+          );
+          const width = Math.hypot(
+            (left.x ?? 0) - (right.x ?? 0),
+            (left.y ?? 0) - (right.y ?? 0)
+          );
+
+          if (width > 0) {
+            // 約 0.35 的口高/口寬視為接近完全張開，轉成 0~1。
+            const normalized = Math.max(0, Math.min(1, (vertical / width) / 0.35));
+            return { score: normalized, source: "landmark" };
+          }
+        }
+      }
+
+      return null;
     }
 
     function updateMouthState(rawOpen, perfNow) {
@@ -1205,7 +1236,8 @@
 
             const perfNow = performance.now();
             const result = faceLandmarker.detectForVideo(camera, perfNow);
-            const score = getJawOpenScore(result);
+            const jawResult = getJawOpenScore(result);
+            const score = jawResult?.score ?? null;
 
             if (isRecording) updateRatioBar(perfNow);
 
@@ -1220,7 +1252,8 @@
                 console.debug("Face detected, but jawOpen score unavailable:", result?.faceBlendshapes);
               }
             } else {
-              scoreBadge.textContent = `jawOpen ${Number(score).toFixed(2)}`;
+              scoreBadge.textContent =
+                `jawOpen ${Number(score).toFixed(2)}${jawResult?.source === "landmark" ? " · L" : ""}`;
               const rawOpen = score > OPEN_THRESHOLD;
 
               if (!isRecording) {
