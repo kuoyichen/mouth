@@ -456,6 +456,9 @@
     // MediaPipe jawOpen 分數高於目前滑桿門檻時，視為嘴巴張開。
     let OPEN_THRESHOLD = 0.10;
 
+    const MEDIAPIPE_MODEL_URL =
+      "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+
     // 為避免臨界值抖動造成重複觸發，狀態需維持一小段時間才確認。
     const STABLE_MS = 180;
 
@@ -619,35 +622,83 @@
 
     async function initMediaPipe() {
       try {
-        statusEl.textContent = "載入 MediaPipe 模型中…";
+        statusEl.textContent = "1/4 正在檢查 MediaPipe 模型…";
+
+        // 先確認模型 URL 在目前部署環境可直接取得。
+        // GitHub Pages 本身使用 HTTPS，因此跨來源載入 Google Storage / jsDelivr 是可行的。
+        const modelResponse = await fetch(MEDIAPIPE_MODEL_URL, {
+          method: "GET",
+          cache: "force-cache"
+        });
+
+        if (!modelResponse.ok) {
+          throw new Error(
+            `模型下載失敗：HTTP ${modelResponse.status} ${modelResponse.statusText}`
+          );
+        }
+
+        // 不必把整個模型留在 JS 記憶體中；讀少量資訊後讓 MediaPipe 自己依 URL 載入。
+        const modelSize = Number(modelResponse.headers.get("content-length")) || 0;
+        statusEl.textContent =
+          `2/4 模型可取得${modelSize ? `（約 ${(modelSize / 1024 / 1024).toFixed(1)} MB）` : ""}，正在載入 WASM…`;
+
         const vision = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm"
         );
 
-        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath:
-              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
-            delegate: "GPU"
-          },
+        const commonOptions = {
           runningMode: "VIDEO",
           numFaces: 1,
           outputFaceBlendshapes: true,
           minFaceDetectionConfidence: 0.5,
           minFacePresenceConfidence: 0.5,
           minTrackingConfidence: 0.5
-        });
+        };
 
-        statusEl.textContent = "MediaPipe 已就緒，請按「開始」。";
+        statusEl.textContent = "3/4 正在初始化 Face Landmarker（GPU）…";
+
+        try {
+          faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: MEDIAPIPE_MODEL_URL,
+              delegate: "GPU"
+            },
+            ...commonOptions
+          });
+        } catch (gpuError) {
+          console.warn("GPU 初始化失敗，改用 CPU：", gpuError);
+          statusEl.textContent = "GPU 初始化失敗，改用 CPU…";
+
+          faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: MEDIAPIPE_MODEL_URL,
+              delegate: "CPU"
+            },
+            ...commonOptions
+          });
+        }
+
+        statusEl.textContent = "4/4 MediaPipe 模型初始化成功，正在開啟相機…";
+
         await startCamera();
+
+        statusEl.textContent =
+          "MediaPipe 已就緒。可按 3 / 5 / 10 分鐘開始；上方 jawOpen 會即時顯示偵測值。";
+
         if (!detecting) {
           detecting = true;
           requestAnimationFrame(detectLoop);
         }
       } catch (err) {
-        console.error(err);
+        console.error("MediaPipe init failed:", err);
+
+        const msg = err?.message ? String(err.message) : String(err);
         statusEl.textContent =
-          "MediaPipe 載入失敗。請確認網路連線，並使用 HTTPS 或 localhost 開啟此頁。";
+          `MediaPipe 初始化失敗：${msg}。請開啟瀏覽器開發者工具 Console 查看詳細錯誤。`;
+
+        scoreBadge.textContent = "jawOpen --";
+        mouthBadge.textContent = "模型未就緒";
+        mouthBadge.className = "badge closed";
       }
     }
 
